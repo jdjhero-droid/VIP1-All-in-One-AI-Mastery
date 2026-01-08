@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { ModelType, AspectRatio, StoryGenerationResult, TitleData, ImageResolution } from "../types";
+import { ModelType, AspectRatio, StoryGenerationResult, TitleData, ImageResolution } from "./types";
 
 // TypeScript에서 process를 인식하도록 전역 타입 보완
 declare const process: {
