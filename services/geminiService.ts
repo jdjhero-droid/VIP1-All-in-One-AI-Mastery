@@ -1,14 +1,21 @@
 
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { ModelType, AspectRatio, StoryGenerationResult, TitleData, ImageResolution } from "../types";
-import { getApiKey, isVaultActivated } from "../utils/keyStorage";
+import { getApiKey } from "../utils/keyStorage";
+
+// TypeScript에서 process를 인식하도록 전역 타입 보완
+declare const process: {
+  env: {
+    API_KEY?: string;
+  };
+};
 
 /**
  * AI Client Factory
  * 안전하게 API 키를 획득합니다.
  */
 const getAIClient = () => {
-  // process.env가 정의되지 않은 환경을 고려하여 안전하게 접근
+  // 지침에 따라 process.env.API_KEY를 최우선으로 사용합니다.
   const envKey = typeof process !== 'undefined' ? process.env?.API_KEY : null;
   const apiKey = envKey || getApiKey();
   
