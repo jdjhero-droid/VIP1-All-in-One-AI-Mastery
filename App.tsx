@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ResultGrid } from './components/ResultGrid';
@@ -7,7 +6,6 @@ import { HistoryPanel } from './components/HistoryPanel';
 import { ImageOverlay } from './components/ImageOverlay';
 import { ModelType, GeneratedScene, AspectRatio, TitleData, ImageResolution, HistoryItem } from './types';
 import { generateStoryStructure, generateSceneImage, generateTitles } from './services/geminiService';
-import { hasStoredApiKey, isVaultActivated, setVaultActivated } from './utils/keyStorage';
 
 const App: React.FC = () => {
   const [topic, setTopic] = useState('');
@@ -59,27 +57,20 @@ const App: React.FC = () => {
     return () => clearTimeout(timeoutId);
   }, [historyItems]);
 
+  /**
+   * AI Studio 지침에 따른 API 키 상태 확인
+   */
   const checkKeyStatus = async () => {
-    // 환경 변수에 키가 있으면 항상 활성화된 것으로 간주
-    if (process.env.API_KEY) {
-      setIsKeyActive(true);
-      return;
-    }
-
-    const activated = isVaultActivated();
-    const hasManual = hasStoredApiKey();
-    let hasProject = false;
-    
     if (window.aistudio) {
       try {
-        hasProject = await window.aistudio.hasSelectedApiKey();
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        setIsKeyActive(hasKey);
       } catch (e) {
         console.warn("Native API check failed", e);
       }
+    } else if (process.env.API_KEY) {
+      setIsKeyActive(true);
     }
-
-    // Vault가 활성화되어 있거나 이미 키가 수동으로 설정된 경우
-    setIsKeyActive(activated && (hasManual || hasProject));
   };
 
   const addToHistory = useCallback((url: string, type: 'image' | 'video', prompt: string) => {
@@ -97,14 +88,42 @@ const App: React.FC = () => {
     });
   }, []);
 
-  const ensureKey = (): boolean => {
+  /**
+   * API 키 선택 다이얼로그를 엽니다.
+   */
+  const ensureKey = async (): Promise<boolean> => {
     if (isKeyActive) return true;
+    
+    if (window.aistudio) {
+      await window.aistudio.openSelectKey();
+      // 지침: openSelectKey 호출 후 즉시 성공으로 가정하고 진행합니다.
+      setIsKeyActive(true);
+      return true;
+    }
+    
     setIsApiKeyModalOpen(true);
     return false;
   };
 
+  /**
+   * 'Requested entity was not found' 에러 발생 시 키 선택 상태를 초기화합니다.
+   */
+  const handleApiError = async (error: any) => {
+    if (error.message?.includes("Requested entity was not found")) {
+      setIsKeyActive(false);
+      if (window.aistudio) {
+        await window.aistudio.openSelectKey();
+        setIsKeyActive(true);
+      } else {
+        setIsApiKeyModalOpen(true);
+      }
+      return true;
+    }
+    return false;
+  };
+
   const handleGenerateStoryboard = async () => {
-    if (!ensureKey()) return;
+    if (!(await ensureKey())) return;
     if (!topic) return;
 
     setIsGenerating(true);
@@ -126,13 +145,13 @@ const App: React.FC = () => {
       setLyricsKorean(result.lyricsKorean);
       setIsGeneratingStory(false);
 
-      // Generate scene images in parallel but update state carefully
+      // Generate scene images in parallel
       initializedScenes.forEach(async (scene, index) => {
         try {
           const imageUrl = await generateSceneImage(selectedModel, scene.imagePrompt, selectedAspectRatio, selectedResolution, referenceImage);
           
           setScenes(prev => {
-            if (prev.length === 0) return prev; // Avoid updating if cleared
+            if (prev.length === 0) return prev;
             const newScenes = [...prev];
             if (newScenes[index]) {
               newScenes[index] = { ...newScenes[index], imageUrl, isLoading: false };
@@ -143,11 +162,7 @@ const App: React.FC = () => {
           addToHistory(imageUrl, 'image', scene.imagePrompt);
         } catch (error: any) {
           console.error(`Render error for scene ${index}:`, error);
-          if (error.message?.includes("Requested entity was not found")) {
-            setVaultActivated(false);
-            setIsKeyActive(false);
-            setIsApiKeyModalOpen(true);
-          }
+          await handleApiError(error);
           setScenes(prev => {
             if (prev.length === 0) return prev;
             const newScenes = [...prev];
@@ -160,11 +175,7 @@ const App: React.FC = () => {
       });
     } catch (error: any) {
       console.error("Storyboard generation failed:", error);
-      if (error.message?.includes("Requested entity was not found")) {
-        setVaultActivated(false);
-        setIsKeyActive(false);
-        setIsApiKeyModalOpen(true);
-      }
+      await handleApiError(error);
       setIsGeneratingStory(false);
     } finally {
       setIsGenerating(false);
@@ -172,7 +183,7 @@ const App: React.FC = () => {
   };
 
   const handleRegenerateScene = async (index: number, newPrompt: string) => {
-     if (!ensureKey()) return;
+     if (!(await ensureKey())) return;
      setScenes(prev => {
          const newScenes = [...prev];
          if (newScenes[index]) {
@@ -189,11 +200,7 @@ const App: React.FC = () => {
          });
          addToHistory(imageUrl, 'image', newPrompt);
      } catch (error: any) {
-         if (error.message?.includes("Requested entity was not found")) {
-            setVaultActivated(false);
-            setIsKeyActive(false);
-            setIsApiKeyModalOpen(true);
-         }
+         await handleApiError(error);
          setScenes(prev => {
             const newScenes = [...prev];
             if (newScenes[index]) newScenes[index] = { ...newScenes[index], isLoading: false, error: 'Retry Failed' };
@@ -219,7 +226,7 @@ const App: React.FC = () => {
         onImageUpload={setReferenceImage}
         onGenerate={handleGenerateStoryboard}
         isGenerating={isGenerating}
-        onOpenApiSettings={() => setIsApiKeyModalOpen(true)}
+        onOpenApiSettings={() => window.aistudio?.openSelectKey() || setIsApiKeyModalOpen(true)}
         apiKeySet={isKeyActive}
         onMagicPromptUpdate={setMagicPrompt}
       />
@@ -240,6 +247,7 @@ const App: React.FC = () => {
               setTitles(newTitles); 
             } catch (e) {
               console.error("Failed to regenerate titles", e);
+              await handleApiError(e);
             } finally { 
               setIsRegeneratingTitles(false); 
             }
